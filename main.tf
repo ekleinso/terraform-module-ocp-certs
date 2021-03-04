@@ -7,25 +7,25 @@ locals {
 # CREATE A TLS CERTIFICATE SIGNED USING THE CA CERTIFICATE
 # ---------------------------------------------------------------------------------------------------------------------
 
-resource "tls_private_key" "openshift" {
+resource "tls_private_key" "openshift_app" {
   algorithm   = var.private_key_algorithm
   ecdsa_curve = var.private_key_ecdsa_curve
   rsa_bits    = var.private_key_rsa_bits
 }
 
 #
-resource "local_file" "openshift_key" {
-    content  = tls_private_key.openshift.private_key_pem
-    filename = format("%s/openshift.key.pem", local.certificates_path)
+resource "local_file" "openshift_app_key" {
+    content  = tls_private_key.openshift_app.private_key_pem
+    filename = format("%s/openshift-app.key.pem", local.certificates_path)
     file_permission = 644
 }
 
-resource "tls_cert_request" "openshift" {
-  key_algorithm   = tls_private_key.openshift.algorithm
-  private_key_pem = tls_private_key.openshift.private_key_pem
+resource "tls_cert_request" "openshift_app" {
+  key_algorithm   = tls_private_key.openshift_app.algorithm
+  private_key_pem = tls_private_key.openshift_app.private_key_pem
 
-  dns_names    = ["api.${var.cluster_id}.${var.dns_domain}", "*.apps.${var.cluster_id}.${var.dns_domain}"]
-  ip_addresses = [var.api_vip, var.ingress_vip]
+  dns_names    = ["*.apps.${var.cluster_id}.${var.dns_domain}"]
+  ip_addresses = [var.ingress_vip]
 
   subject {
     common_name  = "${var.cluster_id}.${var.dns_domain}"
@@ -33,8 +33,8 @@ resource "tls_cert_request" "openshift" {
   }
 }
 
-resource "tls_locally_signed_cert" "openshift" {
-  cert_request_pem = tls_cert_request.openshift.cert_request_pem
+resource "tls_locally_signed_cert" "openshift_app" {
+  cert_request_pem = tls_cert_request.openshift_app.cert_request_pem
 
   ca_key_algorithm   = var.private_key_algorithm
   ca_private_key_pem = file("${path.root}/${var.ca_private_key_pem}")
@@ -46,9 +46,54 @@ resource "tls_locally_signed_cert" "openshift" {
 }
 
 #
-resource "local_file" "openshift_crt" {
-    content  = tls_locally_signed_cert.openshift.cert_pem
-    filename = format("%s/openshift.crt.pem", local.certificates_path)
+resource "local_file" "openshift_app._crt" {
+    content  = tls_locally_signed_cert.openshift_app..cert_pem
+    filename = format("%s/openshift-app.crt.pem", local.certificates_path)
+    file_permission = 644
+}
+
+resource "tls_private_key" "openshift_api" {
+  algorithm   = var.private_key_algorithm
+  ecdsa_curve = var.private_key_ecdsa_curve
+  rsa_bits    = var.private_key_rsa_bits
+}
+
+#
+resource "local_file" "openshift_api_key" {
+    content  = tls_private_key.openshift_api.private_key_pem
+    filename = format("%s/openshift-api.key.pem", local.certificates_path)
+    file_permission = 644
+}
+
+resource "tls_cert_request" "openshift_api" {
+  key_algorithm   = tls_private_key.openshift_api.algorithm
+  private_key_pem = tls_private_key.openshift_api.private_key_pem
+
+  dns_names    = ["api.${var.cluster_id}.${var.dns_domain}", "api-int.${var.cluster_id}.${var.dns_domain}"]
+  ip_addresses = [var.api_vip]
+
+  subject {
+    common_name  = "${var.cluster_id}.${var.dns_domain}"
+    organization = var.dns_domain
+  }
+}
+
+resource "tls_locally_signed_cert" "openshift_api" {
+  cert_request_pem = tls_cert_request.openshift_api.cert_request_pem
+
+  ca_key_algorithm   = var.private_key_algorithm
+  ca_private_key_pem = file("${path.root}/${var.ca_private_key_pem}")
+  ca_cert_pem        = file("${path.root}/${var.ca_cert_pem}")
+
+  validity_period_hours = var.validity_period_hours
+  allowed_uses          = var.allowed_uses
+
+}
+
+#
+resource "local_file" "openshift_api_crt" {
+    content  = tls_locally_signed_cert.openshift_api.cert_pem
+    filename = format("%s/openshift-api.crt.pem", local.certificates_path)
     file_permission = 644
 }
 
@@ -58,7 +103,7 @@ resource "null_resource" "ocp_cert" {
 set -ex
 
 ../binaries/oc patch proxy/cluster --type=merge --patch='{"spec":{"trustedCA":{"name":"user-ca-bundle"}}}'
-../binaries/oc --namespace openshift-ingress create secret tls custom-cert --cert=openshift.crt.pem --key=openshift.key.pem
+../binaries/oc --namespace openshift-ingress create secret tls custom-cert --cert=${local_file.local_file.openshift_app_crt.filename --key=${local_file.local_file.openshift_app_key.filename
 ../binaries/oc patch --type=merge --namespace openshift-ingress-operator ingresscontrollers/default --patch '{"spec":{"defaultCertificate":{"name":"custom-cert"}}}'
 EOF
 
@@ -70,8 +115,10 @@ EOF
   }
 
   depends_on = [
-    local_file.openshift_crt,
-    local_file.openshift_key
+    local_file.openshift_api_crt,
+    local_file.openshift_api_key,
+    local_file.openshift_app_crt,
+    local_file.openshift_app_key
   ]
 }
 
