@@ -46,8 +46,8 @@ resource "tls_locally_signed_cert" "openshift_app" {
 }
 
 #
-resource "local_file" "openshift_app._crt" {
-    content  = tls_locally_signed_cert.openshift_app..cert_pem
+resource "local_file" "openshift_app_crt" {
+    content  = tls_locally_signed_cert.openshift_app.cert_pem
     filename = format("%s/openshift-app.crt.pem", local.certificates_path)
     file_permission = 644
 }
@@ -103,7 +103,7 @@ resource "null_resource" "ocp_cert" {
 set -ex
 
 ../binaries/oc patch proxy/cluster --type=merge --patch='{"spec":{"trustedCA":{"name":"user-ca-bundle"}}}'
-../binaries/oc --namespace openshift-ingress create secret tls custom-cert --cert=${local_file.local_file.openshift_app_crt.filename --key=${local_file.local_file.openshift_app_key.filename
+../binaries/oc --namespace openshift-ingress create secret tls custom-cert --cert=${local_file.openshift_app_crt.filename} --key=${local_file.openshift_app_key.filename}
 ../binaries/oc patch --type=merge --namespace openshift-ingress-operator ingresscontrollers/default --patch '{"spec":{"defaultCertificate":{"name":"custom-cert"}}}'
 EOF
 
